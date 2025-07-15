@@ -4,19 +4,27 @@ import { ChatMessage } from "~/components/chat-message";
 import { SignInModal } from "~/components/sign-in-modal";
 import { useChat } from "@ai-sdk/react";
 import { Square } from "lucide-react";
+import React from "react";
+import { useSession } from "next-auth/react";
 
 interface ChatProps {
   userName: string;
 }
 
 export const ChatPage = ({ userName }: ChatProps) => {
-  const {
-    messages,
-    input,
-    handleInputChange,
-    handleSubmit,
-    isLoading,
-  } = useChat();
+  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat();
+  const { data: session, status } = useSession();
+  const [showSignIn, setShowSignIn] = React.useState(false);
+
+  // Custom submit handler
+  const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!session) {
+      setShowSignIn(true);
+      return;
+    }
+    handleSubmit(e);
+  };
 
   return (
     <>
@@ -39,10 +47,7 @@ export const ChatPage = ({ userName }: ChatProps) => {
         </div>
 
         <div className="border-t border-gray-700">
-          <form
-            onSubmit={handleSubmit}
-            className="mx-auto max-w-[65ch] p-4"
-          >
+          <form onSubmit={onSubmit} className="mx-auto max-w-[65ch] p-4">
             <div className="flex gap-2">
               <input
                 value={input}
@@ -58,14 +63,18 @@ export const ChatPage = ({ userName }: ChatProps) => {
                 disabled={isLoading || !input.trim()}
                 className="rounded bg-gray-700 px-4 py-2 text-white hover:bg-gray-600 focus:border-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:hover:bg-gray-700"
               >
-                {isLoading ? <Square className="size-4 animate-spin" /> : "Send"}
+                {isLoading ? (
+                  <Square className="size-4 animate-spin" />
+                ) : (
+                  "Send"
+                )}
               </button>
             </div>
           </form>
         </div>
       </div>
 
-      <SignInModal isOpen={false} onClose={() => {}} />
+      <SignInModal isOpen={showSignIn} onClose={() => setShowSignIn(false)} />
     </>
   );
 };
