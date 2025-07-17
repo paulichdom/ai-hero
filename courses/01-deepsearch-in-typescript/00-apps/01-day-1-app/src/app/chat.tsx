@@ -16,6 +16,8 @@ export const ChatPage = ({ userName }: ChatProps) => {
   const { data: session, status } = useSession();
   const [showSignIn, setShowSignIn] = React.useState(false);
 
+  console.log({messages})
+
   // Custom submit handler
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -38,7 +40,7 @@ export const ChatPage = ({ userName }: ChatProps) => {
             return (
               <ChatMessage
                 key={index}
-                text={message.content}
+                parts={message.parts ?? []}
                 role={message.role}
                 userName={userName}
               />
