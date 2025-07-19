@@ -12,11 +12,10 @@ interface ChatProps {
 }
 
 export const ChatPage = ({ userName }: ChatProps) => {
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat();
+  const { messages, input, handleInputChange, handleSubmit, isLoading, error } =
+    useChat();
   const { data: session, status } = useSession();
   const [showSignIn, setShowSignIn] = React.useState(false);
-
-  console.log({messages})
 
   // Custom submit handler
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {
@@ -46,6 +45,22 @@ export const ChatPage = ({ userName }: ChatProps) => {
               />
             );
           })}
+          {error && (
+            <ChatMessage
+              key="error-message"
+              parts={[
+                {
+                  type: "text",
+                  text:
+                    typeof error === "string"
+                      ? error
+                      : error.message || "An error occurred.",
+                },
+              ]}
+              role="system"
+              userName="System"
+            />
+          )}
         </div>
 
         <div className="border-t border-gray-700">
