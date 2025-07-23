@@ -1,11 +1,17 @@
-import type { Message } from "ai";
-import { streamText, createDataStreamResponse } from "ai";
-import { model } from "~/model";
-import { auth } from "~/server/auth";
-import { searchSerper } from "~/serper";
+import {
+  appendResponseMessages,
+  createDataStreamResponse,
+  streamText,
+  type Message,
+} from "ai";
+import { nanoid } from "nanoid";
 import { z } from "zod";
+import { model } from "~/model";
+import { upsertChat } from "~/server/chat-helpers";
+import { auth } from "~/server/auth";
 import { db } from "~/server/db";
-import { userRequests, users } from "~/server/db/schema";
+import { chats, userRequests, users } from "~/server/db/schema";
+import { searchSerper } from "~/serper";
 import { and, eq, gte } from "drizzle-orm";
 
 export const maxDuration = 60;
@@ -51,13 +57,39 @@ export async function POST(request: Request) {
   await db.insert(userRequests).values({ userId: user.id });
 
   const body = (await request.json()) as {
-    messages: Array<Message>;
+    messages: Message[];
+    chatId?: string;
   };
+
+  const { messages, chatId: existingChatId } = body;
+
+  if (!messages.length) {
+    return new Response("No messages provided", { status: 400 });
+  }
+
+  let chatId = existingChatId;
+
+  if (!chatId) {
+    const newChatId = nanoid();
+    await upsertChat({
+      userId: user.id,
+      chatId: newChatId,
+      title:messages[messages.length - 1]!.content.substring(0, 255) + '...',
+      messages: messages,
+    });
+    chatId = newChatId;
+  } else {
+    // Check if a chat exists and belongs to a user
+    const chat = await db.query.chats.findFirst({
+      where: eq(chats.id, chatId)
+    });
+    if (!chat || chat.userId !== session.user.id) {
+      return new Response("Chat not found or unauthorized", { status: 404 });
+    }
+  }
 
   return createDataStreamResponse({
     execute: async (dataStream) => {
-      const { messages } = body;
-
       const result = streamText({
         model,
         messages,
@@ -79,6 +111,27 @@ export async function POST(request: Request) {
             },
           },
         },
+        onFinish: async ({ response }) => {
+          const responseMessages = response.messages;
+
+          const updatedMessages = appendResponseMessages({
+            messages,
+            responseMessages,
+          });
+
+          const userMessage = updatedMessages.findLast((m) => m.role === "user");
+          if (!userMessage) {
+            return;
+          }
+
+          // Upsert chat with updated messages
+          await upsertChat({
+            userId: session.user.id,
+            chatId: chatId,
+            title: userMessage.content.substring(0, 255) + '...',
+            messages: updatedMessages,
+          });
+        },
         system: `You are an AI assistant with access to a web search tool. For every user query, always use the searchWeb tool to find up-to-date information. Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.`,
         maxSteps: 10,
       });
@@ -87,7 +140,7 @@ export async function POST(request: Request) {
     },
     onError: (e) => {
       console.error(e);
-      return "Oops, an error occured!";
+      return "Oops, an error occurred!";
     },
   });
 }
