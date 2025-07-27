@@ -16,7 +16,11 @@ export default async function HomePage({
   const session = await auth();
   const userName = session?.user?.name ?? "Guest";
   const isAuthenticated = !!session?.user;
-  const { id: chatId } = await searchParams;
+  const { id: chatIdFromUrl } = await searchParams;
+
+  // Generate a stable chatId - either from URL or create new one
+  const chatId = chatIdFromUrl ?? crypto.randomUUID();
+  const isNewChat = !chatIdFromUrl;
 
   // Fetch chats for sidebar if user is authenticated
   const chats =
@@ -24,9 +28,9 @@ export default async function HomePage({
       ? await getChats({ userId: session.user.id })
       : [];
 
-  // Fetch specific chat if chatId is provided
+  // Fetch specific chat if we're loading an existing chat
   let initialMessages: Message[] = [];
-  if (chatId && isAuthenticated && session?.user?.id) {
+  if (!isNewChat && isAuthenticated && session?.user?.id) {
     const chat = await getChat({ userId: session.user.id, chatId });
     if (chat?.messages) {
       initialMessages = chat.messages.map((msg) => ({
@@ -71,7 +75,7 @@ export default async function HomePage({
                 <Link
                   href={`/?id=${chat.id}`}
                   className={`flex-1 rounded-lg p-3 text-left text-sm text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                    chat.id === chatId
+                    chat.id === chatIdFromUrl
                       ? "bg-gray-700"
                       : "hover:bg-gray-750 bg-gray-800"
                   }`}
@@ -96,7 +100,13 @@ export default async function HomePage({
         </div>
       </div>
 
-      <ChatPage userName={userName} chatId={chatId} initialMessages={initialMessages} />
+      <ChatPage
+        key={chatId}
+        userName={userName}
+        chatId={chatId}
+        isNewChat={isNewChat}
+        initialMessages={initialMessages}
+      />
     </div>
   );
 }
