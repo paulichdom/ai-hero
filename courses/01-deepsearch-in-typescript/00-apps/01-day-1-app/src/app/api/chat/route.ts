@@ -68,28 +68,37 @@ export async function POST(request: Request) {
   }
 
   let chatId = existingChatId;
+  const isNewChat = !chatId;
 
-  if (!chatId) {
+  if (isNewChat) {
     const newChatId = nanoid();
     await upsertChat({
       userId: user.id,
       chatId: newChatId,
-      title:messages[messages.length - 1]!.content.substring(0, 255) + '...',
+      title: messages[messages.length - 1]!.content.substring(0, 255) + "...",
       messages: messages,
     });
     chatId = newChatId;
   } else {
     // Check if a chat exists and belongs to a user
     const chat = await db.query.chats.findFirst({
-      where: eq(chats.id, chatId)
+      where: eq(chats.id, chatId!),
     });
     if (!chat || chat.userId !== session.user.id) {
       return new Response("Chat not found or unauthorized", { status: 404 });
     }
   }
 
+  const finalChatId = chatId;
+
   return createDataStreamResponse({
-    execute: async (dataStream) => {
+    async execute(dataStream) {
+      if (isNewChat && finalChatId) {
+        dataStream.writeData({
+          type: "NEW_CHAT_CREATED",
+          chatId: finalChatId,
+        });
+      }
       const result = streamText({
         model,
         messages,
@@ -100,7 +109,7 @@ export async function POST(request: Request) {
             }),
             execute: async ({ query }, { abortSignal }) => {
               const results = await searchSerper(
-                { q: query, num: 10 },
+                { q: query as string, num: 10 },
                 abortSignal,
               );
               return results.organic.map((result) => ({
@@ -127,7 +136,7 @@ export async function POST(request: Request) {
           // Upsert chat with updated messages
           await upsertChat({
             userId: session.user.id,
-            chatId: chatId,
+            chatId: chatId ?? '',
             title: userMessage.content.substring(0, 255) + '...',
             messages: updatedMessages,
           });

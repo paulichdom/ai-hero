@@ -4,18 +4,41 @@ import { ChatMessage } from "~/components/chat-message";
 import { SignInModal } from "~/components/sign-in-modal";
 import { useChat } from "@ai-sdk/react";
 import { Square } from "lucide-react";
-import React from "react";
+import React, { useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import { isNewChatCreated } from "./is-new-chat-created";
 
 interface ChatProps {
   userName: string;
+  chatId: string | undefined;
 }
 
-export const ChatPage = ({ userName }: ChatProps) => {
-  const { messages, input, handleInputChange, handleSubmit, isLoading, error } =
-    useChat();
-  const { data: session, status } = useSession();
+export const ChatPage = ({ userName, chatId }: ChatProps) => {
+  const {
+    messages,
+    input,
+    handleInputChange,
+    handleSubmit,
+    isLoading,
+    error,
+    data,
+  } = useChat({
+    body: {
+      chatId,
+    },
+  });
+  const { data: session } = useSession();
   const [showSignIn, setShowSignIn] = React.useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    const lastDataItem = data?.[data.length - 1];
+
+    if (isNewChatCreated(lastDataItem)) {
+      router.push(`/?id=${lastDataItem.chatId}`);
+    }
+  }, [data, router]);
 
   // Custom submit handler
   const onSubmit = (e: React.FormEvent<HTMLFormElement>) => {

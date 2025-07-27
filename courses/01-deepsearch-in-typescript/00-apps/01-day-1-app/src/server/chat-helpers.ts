@@ -7,7 +7,7 @@ import type { Message as AIMessage } from "ai";
 export const upsertChat = async (opts: {
   userId: string;
   chatId: string;
-  title: string;
+  title?: string;
   messages: AIMessage[];
 }) => {
   // Check if chat exists and belongs to user
@@ -23,6 +23,9 @@ export const upsertChat = async (opts: {
     if (existingChat && existingChat.userId !== opts.userId) {
       throw new Error("Chat ID already exists for a different user.");
     }
+    if (!opts.title) {
+      throw new Error("Title is required for a new chat.");
+    }
     // Create new chat
     await db.insert(chats).values({
       id: opts.chatId,
@@ -31,8 +34,11 @@ export const upsertChat = async (opts: {
     });
   } else {
     // Update title if changed
-    if (chat.title !== opts.title) {
-      await db.update(chats).set({ title: opts.title }).where(eq(chats.id, opts.chatId));
+    if (opts.title && chat.title !== opts.title) {
+      await db
+        .update(chats)
+        .set({ title: opts.title })
+        .where(eq(chats.id, opts.chatId));
     }
     // Delete existing messages
     await db.delete(messages).where(eq(messages.chatId, opts.chatId));
@@ -75,4 +81,4 @@ export const getChats = async (opts: { userId: string }) => {
     },
     orderBy: (chats, { desc }) => [desc(chats.updatedAt)],
   });
-}; 
+};

@@ -13,10 +13,15 @@ const chats = [
 
 const activeChatId = "1";
 
-export default async function HomePage() {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ id?: string }>;
+}) {
   const session = await auth();
   const userName = session?.user?.name ?? "Guest";
   const isAuthenticated = !!session?.user;
+  const { id: chatId } = await searchParams;
 
   return (
     <div className="flex h-screen bg-gray-950">
@@ -68,7 +73,7 @@ export default async function HomePage() {
         </div>
       </div>
 
-      <ChatPage userName={userName} />
+      <ChatPage userName={userName} chatId={chatId} />
     </div>
   );
 }
