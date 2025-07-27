@@ -3,15 +3,10 @@ import Link from "next/link";
 import { auth } from "~/server/auth/index.ts";
 import { ChatPage } from "./chat.tsx";
 import { AuthButton } from "../components/auth-button.tsx";
+import { getChats, getChat } from "~/server/chat-helpers";
+import type { Message } from "ai";
 
-const chats = [
-  {
-    id: "1",
-    title: "My First Chat",
-  },
-];
-
-const activeChatId = "1";
+export const dynamic = "force-dynamic";
 
 export default async function HomePage({
   searchParams,
@@ -22,6 +17,34 @@ export default async function HomePage({
   const userName = session?.user?.name ?? "Guest";
   const isAuthenticated = !!session?.user;
   const { id: chatId } = await searchParams;
+
+  // Fetch chats for sidebar if user is authenticated
+  const chats =
+    isAuthenticated && session?.user?.id
+      ? await getChats({ userId: session.user.id })
+      : [];
+
+  // Fetch specific chat if chatId is provided
+  let initialMessages: Message[] = [];
+  if (chatId && isAuthenticated && session?.user?.id) {
+    const chat = await getChat({ userId: session.user.id, chatId });
+    if (chat?.messages) {
+      initialMessages = chat.messages.map((msg) => ({
+        id: msg.id,
+        // msg.role is typed as string, so we
+        // need to cast it to the correct type
+        role: msg.role as "user" | "assistant",
+        // msg.parts is typed as unknown[], so we
+        // need to cast it to the correct type and ensure it's an array
+        parts: Array.isArray(msg.parts) ? (msg.parts as Message["parts"]) : [],
+        // content is not persisted, so we can
+        // safely pass an empty string, because
+        // parts are always present, and the AI SDK
+        // will use the parts to construct the content
+        content: "",
+      }));
+    }
+  }
 
   return (
     <div className="flex h-screen bg-gray-950">
@@ -46,9 +69,9 @@ export default async function HomePage({
             chats.map((chat) => (
               <div key={chat.id} className="flex items-center gap-2">
                 <Link
-                  href={`/?chatId=${chat.id}`}
+                  href={`/?id=${chat.id}`}
                   className={`flex-1 rounded-lg p-3 text-left text-sm text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400 ${
-                    chat.id === activeChatId
+                    chat.id === chatId
                       ? "bg-gray-700"
                       : "hover:bg-gray-750 bg-gray-800"
                   }`}
@@ -73,7 +96,7 @@ export default async function HomePage({
         </div>
       </div>
 
-      <ChatPage userName={userName} chatId={chatId} />
+      <ChatPage userName={userName} chatId={chatId} initialMessages={initialMessages} />
     </div>
   );
 }

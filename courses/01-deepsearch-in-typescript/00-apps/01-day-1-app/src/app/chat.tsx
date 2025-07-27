@@ -8,13 +8,15 @@ import React, { useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { isNewChatCreated } from "./is-new-chat-created";
+import type { Message } from "ai";
 
 interface ChatProps {
   userName: string;
   chatId: string | undefined;
+  initialMessages?: Message[];
 }
 
-export const ChatPage = ({ userName, chatId }: ChatProps) => {
+export const ChatPage = ({ userName, chatId, initialMessages }: ChatProps) => {
   const {
     messages,
     input,
@@ -27,6 +29,7 @@ export const ChatPage = ({ userName, chatId }: ChatProps) => {
     body: {
       chatId,
     },
+    initialMessages: initialMessages ?? [],
   });
   const { data: session } = useSession();
   const [showSignIn, setShowSignIn] = React.useState(false);
