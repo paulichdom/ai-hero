@@ -4,7 +4,6 @@ import {
   streamText,
   type Message,
 } from "ai";
-import { nanoid } from "nanoid";
 import { z } from "zod";
 import { model } from "~/model";
 import { upsertChat } from "~/server/chat-helpers";

@@ -9,6 +9,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { isNewChatCreated } from "./is-new-chat-created";
 import type { Message } from "ai";
+import { StickToBottom } from "use-stick-to-bottom";
 
 interface ChatProps {
   userName: string;
@@ -57,12 +58,12 @@ export const ChatPage = ({ userName, chatId, isNewChat, initialMessages }: ChatP
 
   return (
     <>
-      <div className="flex flex-1 flex-col">
-        <div
-          className="mx-auto w-full max-w-[65ch] flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-track-gray-800 scrollbar-thumb-gray-600 hover:scrollbar-thumb-gray-500"
-          role="log"
-          aria-label="Chat messages"
-        >
+      <StickToBottom
+        className="flex flex-1 flex-col [&>div]:scrollbar-thin [&>div]:scrollbar-track-gray-800 [&>div]:scrollbar-thumb-gray-600 [&>div]:hover:scrollbar-thumb-gray-500"
+        resize="smooth"
+        initial="smooth"
+      >
+        <StickToBottom.Content className="mx-auto w-full max-w-[65ch] flex-1 p-4 flex flex-col gap-2">
           {messages.map((message, index) => {
             return (
               <ChatMessage
@@ -89,7 +90,7 @@ export const ChatPage = ({ userName, chatId, isNewChat, initialMessages }: ChatP
               userName="System"
             />
           )}
-        </div>
+        </StickToBottom.Content>
 
         <div className="border-t border-gray-700">
           <form onSubmit={onSubmit} className="mx-auto max-w-[65ch] p-4">
@@ -117,7 +118,7 @@ export const ChatPage = ({ userName, chatId, isNewChat, initialMessages }: ChatP
             </div>
           </form>
         </div>
-      </div>
+      </StickToBottom>
 
       <SignInModal isOpen={showSignIn} onClose={() => setShowSignIn(false)} />
     </>
