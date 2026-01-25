@@ -136,6 +136,7 @@ export async function POST(request: Request) {
         },
         system: `You are an AI assistant with access to a web search tool. For every user query, always use the searchWeb tool to find up-to-date information. Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.`,
         maxSteps: 10,
+        experimental_telemetry: { isEnabled: true },
       });
 
       result.mergeIntoDataStream(dataStream);
