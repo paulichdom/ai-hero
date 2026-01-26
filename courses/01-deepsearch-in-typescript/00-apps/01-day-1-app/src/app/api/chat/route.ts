@@ -178,7 +178,15 @@ export async function POST(request: Request) {
             await langfuse.flushAsync();
           }
         },
-        system: `You are an AI assistant with access to two tools: searchWeb (for finding up-to-date sources) and scrapePages (for fetching full-page markdown). For every user query, always do the following: (1) use searchWeb to find candidate URLs, (2) call scrapePages on the best one or two URLs (and on any user-provided URL) before forming an answer, and (3) base your response on the scraped markdown. Never answer without using scrapePages first unless the user request is unrelated to external information. Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.`,
+        system: `You are an AI assistant with access to two tools: searchWeb (for finding up-to-date sources) and scrapePages (for fetching full-page markdown).
+
+      For every user query, always do the following:
+      1) use searchWeb to find candidate URLs
+      2) select a diverse set of 4-6 high-quality URLs (including any user-provided URLs) spanning different domains/perspectives
+      3) call scrapePages on those URLs before forming an answer
+      4) base your response on the scraped markdown
+
+      Never answer without calling scrapePages first. Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.`,
         maxSteps: 10,
         experimental_telemetry: {
           isEnabled: true,
