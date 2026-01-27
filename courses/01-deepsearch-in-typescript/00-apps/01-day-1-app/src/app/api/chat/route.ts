@@ -14,6 +14,7 @@ import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { chats, userRequests, users } from "~/server/db/schema";
 import { searchSerper } from "~/serper";
+import { bulkCrawlWebsites } from "~/crawler";
 import { and, eq, gte } from "drizzle-orm";
 
 export const maxDuration = 60;
@@ -130,6 +131,30 @@ export async function POST(request: Request) {
               }));
             },
           },
+          scrapePages: {
+            parameters: z.object({
+              urls: z
+                .array(z.string().url())
+                .describe("The URLs of the pages to scrape"),
+            }),
+            execute: async ({ urls }) => {
+              const result = await bulkCrawlWebsites({ urls });
+
+              if (result.success) {
+                return result.results.map((r) => ({
+                  url: r.url,
+                  content: r.result.data,
+                }));
+              }
+
+              // Return both successful results and errors
+              return result.results.map((r) => ({
+                url: r.url,
+                content: r.result.success ? r.result.data : null,
+                error: r.result.success ? null : r.result.error,
+              }));
+            },
+          },
         },
         onFinish: async ({ response }) => {
           try {
@@ -156,7 +181,23 @@ export async function POST(request: Request) {
             await langfuse.flushAsync();
           }
         },
-        system: `You are an AI assistant with access to a web search tool. For every user query, always use the searchWeb tool to find up-to-date information. Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.`,
+        system: `You are an AI assistant with access to web search and page scraping tools.
+
+## Available Tools
+
+### searchWeb
+Use this tool to search the web for information. For every user query, always use the searchWeb tool first to find up-to-date information.
+
+### scrapePages
+Use this tool to get the full content of web pages. You MUST use this tool after every searchWeb call to get the complete content from the most relevant results. Never rely solely on search snippets - always scrape the pages to get full details.
+
+## Guidelines
+- Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.
+- ALWAYS follow this workflow: 1) Search the web, 2) Scrape 4-6 of the most relevant pages, 3) Provide your answer based on the full content.
+- When scraping, select a DIVERSE set of sources - mix different websites, perspectives, and source types (e.g., official docs, blogs, news, forums) to provide comprehensive and balanced information.
+- Do not scrape multiple pages from the same domain when better alternatives exist.
+- If scraping fails for a URL, inform the user and try to work with the available information.
+- Do not skip the scraping step. Search snippets are not sufficient for providing accurate, comprehensive answers.`,
         maxSteps: 10,
         experimental_telemetry: {
           isEnabled: true,
