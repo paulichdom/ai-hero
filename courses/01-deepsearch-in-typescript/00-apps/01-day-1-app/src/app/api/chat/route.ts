@@ -13,6 +13,8 @@ import { upsertChat } from "~/server/chat-helpers";
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { chats, userRequests, users } from "~/server/db/schema";
+import { crawlMultipleUrls } from "~/server/crawler";
+import { cacheWithRedis } from "~/server/redis/redis";
 import { searchSerper } from "~/serper";
 import { bulkCrawlWebsites } from "~/crawler";
 import { and, eq, gte } from "drizzle-orm";
@@ -23,6 +25,8 @@ export const REQUESTS_PER_DAY = 2;
 const langfuse = new Langfuse({
   environment: env.NODE_ENV,
 });
+
+const cachedScrapePages = cacheWithRedis("scrapePagesTool", crawlMultipleUrls);
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -153,6 +157,24 @@ export async function POST(request: Request) {
                 content: r.result.success ? r.result.data : null,
                 error: r.result.success ? null : r.result.error,
               }));
+            },
+          },
+          scrapePages: {
+            parameters: z.object({
+              urls: z
+                .array(z.string().url("A full URL to scrape"))
+                .min(1, "Provide at least one URL"),
+              maxRetries: z
+                .number()
+                .int()
+                .min(1)
+                .max(5)
+                .optional()
+                .describe("How many times to retry crawling on failures"),
+            }),
+            execute: async ({ urls, maxRetries }) => {
+              const result = await cachedScrapePages({ urls, maxRetries });
+              return result;
             },
           },
         },
