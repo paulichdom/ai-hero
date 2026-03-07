@@ -16,7 +16,6 @@ import { chats, userRequests, users } from "~/server/db/schema";
 import { crawlMultipleUrls } from "~/server/crawler";
 import { cacheWithRedis } from "~/server/redis/redis";
 import { searchSerper } from "~/serper";
-import { bulkCrawlWebsites } from "~/crawler";
 import { and, eq, gte } from "drizzle-orm";
 
 export const maxDuration = 60;
@@ -106,6 +105,9 @@ export async function POST(request: Request) {
     name: "chat",
     userId: session.user.id,
   });
+  const currentDateTime = new Date();
+  const currentDateTimeIso = currentDateTime.toISOString();
+  const currentDateTimeUtc = currentDateTime.toUTCString();
 
   return createDataStreamResponse({
     async execute(dataStream) {
@@ -132,30 +134,7 @@ export async function POST(request: Request) {
                 title: result.title,
                 link: result.link,
                 snippet: result.snippet,
-              }));
-            },
-          },
-          scrapePages: {
-            parameters: z.object({
-              urls: z
-                .array(z.string().url())
-                .describe("The URLs of the pages to scrape"),
-            }),
-            execute: async ({ urls }) => {
-              const result = await bulkCrawlWebsites({ urls });
-
-              if (result.success) {
-                return result.results.map((r) => ({
-                  url: r.url,
-                  content: r.result.data,
-                }));
-              }
-
-              // Return both successful results and errors
-              return result.results.map((r) => ({
-                url: r.url,
-                content: r.result.success ? r.result.data : null,
-                error: r.result.success ? null : r.result.error,
+                publishedDate: result.date ?? null,
               }));
             },
           },
@@ -204,6 +183,11 @@ export async function POST(request: Request) {
           }
         },
         system: `You are an AI assistant with access to web search and page scraping tools.
+
+## Current Date and Time
+- Current date and time (ISO 8601): ${currentDateTimeIso}
+- Current date and time (UTC): ${currentDateTimeUtc}
+- When the user asks for up-to-date, latest, current, today, or recent information, use this date/time context and include explicit dates in your search queries.
 
 ## Available Tools
 
