@@ -34,11 +34,35 @@ export async function POST(request: Request) {
     return new Response("Unauthorized", { status: 401 });
   }
 
+  const trace = langfuse.trace({
+    name: "chat",
+    userId: session.user.id,
+  });
+
   // Fetch user from DB to get isAdmin
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, session.user.id));
+  const fetchUserByIdSpan = trace.span({
+    name: "fetch-user-by-id",
+    input: {
+      userId: session.user.id,
+    },
+  });
+  let user: typeof users.$inferSelect | undefined;
+  try {
+    [user] = await db.select().from(users).where(eq(users.id, session.user.id));
+    fetchUserByIdSpan.end({
+      output: {
+        found: !!user,
+        isAdmin: user?.isAdmin ?? null,
+      },
+    });
+  } catch (error) {
+    fetchUserByIdSpan.end({
+      output: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    throw error;
+  }
   if (!user) {
     return new Response("User not found", { status: 401 });
   }
@@ -48,23 +72,65 @@ export async function POST(request: Request) {
   if (!isAdmin) {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
-    const requestsToday = await db
-      .select({ count: userRequests.id })
-      .from(userRequests)
-      .where(
-        and(
-          eq(userRequests.userId, user.id),
-          gte(userRequests.requestedAt, startOfDay),
-        ),
-      );
-    const count = requestsToday.length;
+    const countUserRequestsTodaySpan = trace.span({
+      name: "count-user-requests-today",
+      input: {
+        userId: user.id,
+        startOfDayUtc: startOfDay.toISOString(),
+      },
+    });
+    let count = 0;
+    try {
+      const requestsToday = await db
+        .select({ count: userRequests.id })
+        .from(userRequests)
+        .where(
+          and(
+            eq(userRequests.userId, user.id),
+            gte(userRequests.requestedAt, startOfDay),
+          ),
+        );
+      count = requestsToday.length;
+      countUserRequestsTodaySpan.end({
+        output: {
+          requestCount: count,
+        },
+      });
+    } catch (error) {
+      countUserRequestsTodaySpan.end({
+        output: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
     if (count >= REQUESTS_PER_DAY) {
       return new Response("Rate limit exceeded", { status: 429 });
     }
   }
 
   // Record the request
-  await db.insert(userRequests).values({ userId: user.id });
+  const insertUserRequestSpan = trace.span({
+    name: "insert-user-request",
+    input: {
+      userId: user.id,
+    },
+  });
+  try {
+    await db.insert(userRequests).values({ userId: user.id });
+    insertUserRequestSpan.end({
+      output: {
+        inserted: true,
+      },
+    });
+  } catch (error) {
+    insertUserRequestSpan.end({
+      output: {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    throw error;
+  }
 
   const body = (await request.json()) as {
     messages: Message[];
@@ -73,7 +139,6 @@ export async function POST(request: Request) {
   };
 
   const { messages, chatId, isNewChat = false } = body;
-  const currentChatId = chatId ?? randomUUID();
 
   if (!messages.length) {
     return new Response("No messages provided", { status: 400 });
@@ -83,28 +148,73 @@ export async function POST(request: Request) {
     return new Response("Chat ID required", { status: 400 });
   }
 
+  const currentChatId = chatId ?? randomUUID();
+  trace.update({
+    sessionId: currentChatId,
+  });
+
   if (isNewChat) {
-    await upsertChat({
-      userId: user.id,
-      chatId: currentChatId,
-      title: messages[messages.length - 1]!.content.substring(0, 255) + "...",
-      messages: messages,
+    const upsertNewChatSpan = trace.span({
+      name: "upsert-new-chat",
+      input: {
+        userId: user.id,
+        chatId: currentChatId,
+        messageCount: messages.length,
+      },
     });
+    try {
+      await upsertChat({
+        userId: user.id,
+        chatId: currentChatId,
+        title: messages[messages.length - 1]!.content.substring(0, 255) + "...",
+        messages: messages,
+      });
+      upsertNewChatSpan.end({
+        output: {
+          upserted: true,
+        },
+      });
+    } catch (error) {
+      upsertNewChatSpan.end({
+        output: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
   } else {
     // Check if a chat exists and belongs to a user
-    const chat = await db.query.chats.findFirst({
-      where: eq(chats.id, currentChatId),
+    const findExistingChatSpan = trace.span({
+      name: "find-existing-chat",
+      input: {
+        chatId: currentChatId,
+      },
     });
+    let chat:
+      | Awaited<ReturnType<typeof db.query.chats.findFirst>>
+      | undefined;
+    try {
+      chat = await db.query.chats.findFirst({
+        where: eq(chats.id, currentChatId),
+      });
+      findExistingChatSpan.end({
+        output: {
+          found: !!chat,
+          userId: chat?.userId ?? null,
+        },
+      });
+    } catch (error) {
+      findExistingChatSpan.end({
+        output: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      throw error;
+    }
     if (!chat || chat.userId !== session.user.id) {
       return new Response("Chat not found or unauthorized", { status: 404 });
     }
   }
-
-  const trace = langfuse.trace({
-    sessionId: currentChatId,
-    name: "chat",
-    userId: session.user.id,
-  });
   const currentDateTime = new Date();
   const currentDateTimeIso = currentDateTime.toISOString();
   const currentDateTimeUtc = currentDateTime.toUTCString();
@@ -172,12 +282,34 @@ export async function POST(request: Request) {
             }
 
             // Upsert chat with updated messages
-            await upsertChat({
-              userId: session.user.id,
-              chatId: currentChatId,
-              title: userMessage.content.substring(0, 255) + "...",
-              messages: updatedMessages,
+            const upsertFinalChatMessagesSpan = trace.span({
+              name: "upsert-final-chat-messages",
+              input: {
+                userId: session.user.id,
+                chatId: currentChatId,
+                messageCount: updatedMessages.length,
+              },
             });
+            try {
+              await upsertChat({
+                userId: session.user.id,
+                chatId: currentChatId,
+                title: userMessage.content.substring(0, 255) + "...",
+                messages: updatedMessages,
+              });
+              upsertFinalChatMessagesSpan.end({
+                output: {
+                  upserted: true,
+                },
+              });
+            } catch (error) {
+              upsertFinalChatMessagesSpan.end({
+                output: {
+                  error: error instanceof Error ? error.message : String(error),
+                },
+              });
+              throw error;
+            }
           } finally {
             await langfuse.flushAsync();
           }
