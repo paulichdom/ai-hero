@@ -23,6 +23,7 @@ evalite("Deep Search Eval", {
           },
         ],
       },
+      // Not feasible with current API tier - the req's are being rate limited
       /* {
         input: [
           {
