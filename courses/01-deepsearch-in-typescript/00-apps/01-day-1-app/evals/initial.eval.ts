@@ -1,19 +1,32 @@
 import { evalite } from "evalite";
-import { Levenshtein } from "autoevals";
+import type { Message } from "ai";
+import { askDeepSearch } from "~/deep-search";
 
-evalite("My Eval", {
-  // A function that returns an array of test data
-  // - TODO: Replace with your test data
-  data: async () => {
+evalite("Deep Search Eval", {
+  data: async (): Promise<{ input: Message[] }[]> => {
     return [
-      { input: "Hello", expected: "Hello World!" },
+      {
+        input: [
+          {
+            id: "1",
+            role: "user",
+            content: "What is the latest version of TypeScript?",
+          },
+        ],
+      },
+      {
+        input: [
+          {
+            id: "2",
+            role: "user",
+            content: "What are the main features of Next.js 15?",
+          },
+        ],
+      },
     ];
   },
-  // The task to perform
-  // - TODO: Replace with your LLM call
   task: async (input) => {
-    return input + " World!";
+    return askDeepSearch(input);
   },
-  // The scoring methods for the eval
-  scorers: [Levenshtein],
+  scorers: [],
 });
