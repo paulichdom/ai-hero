@@ -11,10 +11,21 @@ import { upsertChat } from "~/server/chat-helpers";
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { chats, userRequests, users } from "~/server/db/schema";
+import {
+  checkRateLimit,
+  type RateLimitConfig,
+  waitForRateLimitSlot,
+} from "~/server/rate-limit";
 import { and, eq, gte } from "drizzle-orm";
 
 export const maxDuration = 60;
 export const REQUESTS_PER_DAY = 2;
+const GLOBAL_LLM_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 1,
+  maxRetries: 3,
+  windowMs: 20_000,
+  keyPrefix: "global_llm",
+};
 
 const langfuse = new Langfuse({
   environment: env.NODE_ENV,
@@ -208,6 +219,7 @@ export async function POST(request: Request) {
       return new Response("Chat not found or unauthorized", { status: 404 });
     }
   }
+
   return createDataStreamResponse({
     async execute(dataStream) {
       if (isNewChat) {
@@ -216,6 +228,48 @@ export async function POST(request: Request) {
           chatId: currentChatId,
         });
       }
+
+      const initialRateLimitStatus = await checkRateLimit(GLOBAL_LLM_RATE_LIMIT);
+      if (!initialRateLimitStatus.allowed) {
+        dataStream.writeData({
+          type: "RATE_LIMIT_WAITING",
+          resetTime: initialRateLimitStatus.resetTime,
+        });
+      }
+
+      const waitForGlobalRateLimitSpan = trace.span({
+        name: "wait-for-global-rate-limit",
+        input: GLOBAL_LLM_RATE_LIMIT,
+      });
+      try {
+        const rateLimitStatus = await waitForRateLimitSlot(GLOBAL_LLM_RATE_LIMIT);
+        if (!rateLimitStatus.allowed) {
+          throw new Error("Rate limit exceeded");
+        }
+
+        waitForGlobalRateLimitSpan.end({
+          output: {
+            allowed: rateLimitStatus.allowed,
+            remaining: rateLimitStatus.remaining,
+            resetTime: new Date(rateLimitStatus.resetTime).toISOString(),
+            totalHits: rateLimitStatus.totalHits,
+          },
+        });
+
+        if (!initialRateLimitStatus.allowed) {
+          dataStream.writeData({
+            type: "RATE_LIMIT_RESOLVED",
+          });
+        }
+      } catch (error) {
+        waitForGlobalRateLimitSpan.end({
+          output: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+        throw error;
+      }
+
       const result = streamFromDeepSearch({
         messages,
         onFinish: async ({ response }) => {
