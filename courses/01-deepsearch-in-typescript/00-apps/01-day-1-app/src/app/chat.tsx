@@ -11,6 +11,39 @@ import { isNewChatCreated } from "./is-new-chat-created";
 import type { Message } from "ai";
 import { StickToBottom } from "use-stick-to-bottom";
 
+type RateLimitWaitingData = {
+  type: "RATE_LIMIT_WAITING";
+  resetTime: number;
+};
+
+type RateLimitResolvedData = {
+  type: "RATE_LIMIT_RESOLVED";
+};
+
+const isRateLimitWaitingData = (
+  data: unknown,
+): data is RateLimitWaitingData => {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "type" in data &&
+    data.type === "RATE_LIMIT_WAITING" &&
+    "resetTime" in data &&
+    typeof data.resetTime === "number"
+  );
+};
+
+const isRateLimitResolvedData = (
+  data: unknown,
+): data is RateLimitResolvedData => {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "type" in data &&
+    data.type === "RATE_LIMIT_RESOLVED"
+  );
+};
+
 interface ChatProps {
   userName: string;
   chatId: string;
@@ -37,10 +70,28 @@ export const ChatPage = ({ userName, chatId, isNewChat, initialMessages }: ChatP
   const { data: session } = useSession();
   const [showSignIn, setShowSignIn] = React.useState(false);
   const router = useRouter();
+  const lastDataItem = data?.[data.length - 1];
+
+  const rateLimitNotice = React.useMemo(() => {
+    if (isRateLimitWaitingData(lastDataItem)) {
+      const secondsUntilReset = Math.max(
+        1,
+        Math.ceil((lastDataItem.resetTime - Date.now()) / 1000),
+      );
+
+      return `Global rate limit reached. Waiting about ${secondsUntilReset} second${
+        secondsUntilReset === 1 ? "" : "s"
+      } before continuing.`;
+    }
+
+    if (isLoading && isRateLimitResolvedData(lastDataItem)) {
+      return "Global rate limit window reset. Continuing request.";
+    }
+
+    return null;
+  }, [isLoading, lastDataItem]);
 
   useEffect(() => {
-    const lastDataItem = data?.[data.length - 1];
-
     if (isNewChatCreated(lastDataItem)) {
       router.push(`/?id=${lastDataItem.chatId}`);
     }
@@ -74,6 +125,19 @@ export const ChatPage = ({ userName, chatId, isNewChat, initialMessages }: ChatP
               />
             );
           })}
+          {rateLimitNotice && (
+            <ChatMessage
+              key="rate-limit-message"
+              parts={[
+                {
+                  type: "text",
+                  text: rateLimitNotice,
+                },
+              ]}
+              role="system"
+              userName="System"
+            />
+          )}
           {error && (
             <ChatMessage
               key="error-message"

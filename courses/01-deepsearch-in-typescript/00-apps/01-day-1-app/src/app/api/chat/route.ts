@@ -1,31 +1,35 @@
 import {
   appendResponseMessages,
   createDataStreamResponse,
-  streamText,
   type Message,
 } from "ai";
 import { randomUUID } from "node:crypto";
 import { Langfuse } from "langfuse";
-import { z } from "zod";
+import { streamFromDeepSearch } from "~/deep-search";
 import { env } from "~/env";
-import { model } from "~/model";
 import { upsertChat } from "~/server/chat-helpers";
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
 import { chats, userRequests, users } from "~/server/db/schema";
-import { crawlMultipleUrls } from "~/server/crawler";
-import { cacheWithRedis } from "~/server/redis/redis";
-import { searchSerper } from "~/serper";
+import {
+  checkRateLimit,
+  type RateLimitConfig,
+  waitForRateLimitSlot,
+} from "~/server/rate-limit";
 import { and, eq, gte } from "drizzle-orm";
 
 export const maxDuration = 60;
 export const REQUESTS_PER_DAY = 2;
+const GLOBAL_LLM_RATE_LIMIT: RateLimitConfig = {
+  maxRequests: 1,
+  maxRetries: 3,
+  windowMs: 20_000,
+  keyPrefix: "global_llm",
+};
 
 const langfuse = new Langfuse({
   environment: env.NODE_ENV,
 });
-
-const cachedScrapePages = cacheWithRedis("scrapePagesTool", crawlMultipleUrls);
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -215,9 +219,6 @@ export async function POST(request: Request) {
       return new Response("Chat not found or unauthorized", { status: 404 });
     }
   }
-  const currentDateTime = new Date();
-  const currentDateTimeIso = currentDateTime.toISOString();
-  const currentDateTimeUtc = currentDateTime.toUTCString();
 
   return createDataStreamResponse({
     async execute(dataStream) {
@@ -227,46 +228,50 @@ export async function POST(request: Request) {
           chatId: currentChatId,
         });
       }
-      const result = streamText({
-        model,
+
+      const initialRateLimitStatus = await checkRateLimit(GLOBAL_LLM_RATE_LIMIT);
+      if (!initialRateLimitStatus.allowed) {
+        dataStream.writeData({
+          type: "RATE_LIMIT_WAITING",
+          resetTime: initialRateLimitStatus.resetTime,
+        });
+      }
+
+      const waitForGlobalRateLimitSpan = trace.span({
+        name: "wait-for-global-rate-limit",
+        input: GLOBAL_LLM_RATE_LIMIT,
+      });
+      try {
+        const rateLimitStatus = await waitForRateLimitSlot(GLOBAL_LLM_RATE_LIMIT);
+        if (!rateLimitStatus.allowed) {
+          throw new Error("Rate limit exceeded");
+        }
+
+        waitForGlobalRateLimitSpan.end({
+          output: {
+            allowed: rateLimitStatus.allowed,
+            remaining: rateLimitStatus.remaining,
+            resetTime: new Date(rateLimitStatus.resetTime).toISOString(),
+            totalHits: rateLimitStatus.totalHits,
+          },
+        });
+
+        if (!initialRateLimitStatus.allowed) {
+          dataStream.writeData({
+            type: "RATE_LIMIT_RESOLVED",
+          });
+        }
+      } catch (error) {
+        waitForGlobalRateLimitSpan.end({
+          output: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+        throw error;
+      }
+
+      const result = streamFromDeepSearch({
         messages,
-        tools: {
-          searchWeb: {
-            parameters: z.object({
-              query: z.string().describe("The query to search the web for"),
-            }),
-            execute: async ({ query }, { abortSignal }) => {
-              const results = await searchSerper(
-                { q: query as string, num: 10 },
-                abortSignal,
-              );
-              return results.organic.map((result) => ({
-                title: result.title,
-                link: result.link,
-                snippet: result.snippet,
-                publishedDate: result.date ?? null,
-              }));
-            },
-          },
-          scrapePages: {
-            parameters: z.object({
-              urls: z
-                .array(z.string().url("A full URL to scrape"))
-                .min(1, "Provide at least one URL"),
-              maxRetries: z
-                .number()
-                .int()
-                .min(1)
-                .max(5)
-                .optional()
-                .describe("How many times to retry crawling on failures"),
-            }),
-            execute: async ({ urls, maxRetries }) => {
-              const result = await cachedScrapePages({ urls, maxRetries });
-              return result;
-            },
-          },
-        },
         onFinish: async ({ response }) => {
           try {
             const responseMessages = response.messages;
@@ -314,30 +319,7 @@ export async function POST(request: Request) {
             await langfuse.flushAsync();
           }
         },
-        system: `You are an AI assistant with access to web search and page scraping tools.
-
-## Current Date and Time
-- Current date and time (ISO 8601): ${currentDateTimeIso}
-- Current date and time (UTC): ${currentDateTimeUtc}
-- When the user asks for up-to-date, latest, current, today, or recent information, use this date/time context and include explicit dates in your search queries.
-
-## Available Tools
-
-### searchWeb
-Use this tool to search the web for information. For every user query, always use the searchWeb tool first to find up-to-date information.
-
-### scrapePages
-Use this tool to get the full content of web pages. You MUST use this tool after every searchWeb call to get the complete content from the most relevant results. Never rely solely on search snippets - always scrape the pages to get full details.
-
-## Guidelines
-- Always cite your sources with inline markdown links, e.g. [source](url), for any factual statements or answers you provide.
-- ALWAYS follow this workflow: 1) Search the web, 2) Scrape 4-6 of the most relevant pages, 3) Provide your answer based on the full content.
-- When scraping, select a DIVERSE set of sources - mix different websites, perspectives, and source types (e.g., official docs, blogs, news, forums) to provide comprehensive and balanced information.
-- Do not scrape multiple pages from the same domain when better alternatives exist.
-- If scraping fails for a URL, inform the user and try to work with the available information.
-- Do not skip the scraping step. Search snippets are not sufficient for providing accurate, comprehensive answers.`,
-        maxSteps: 10,
-        experimental_telemetry: {
+        telemetry: {
           isEnabled: true,
           functionId: "deep-search-chat-agent",
           metadata: {
